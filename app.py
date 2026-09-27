@@ -67,19 +67,31 @@ HOME_TEMPLATE = """
         <div class="eyebrow">LOGSENTINEL / LIVE MONITOR</div>
         <h1>Traffic Inspector</h1>
         <section class="panel" aria-label="Analyze a server log">
-            <form id="logForm">
+            <form id="logForm" action="/" method="post">
                 <label for="request_count">Request count</label>
-                <input type="number" id="request_count" min="0" value="150" required>
+                <input type="number" id="request_count" name="request_count" min="0" value="{{ values.request_count }}" required>
 
                 <label for="error_rate">Error rate (0.0 to 1.0)</label>
-                <input type="number" id="error_rate" min="0" max="1" step="0.01" value="0.03" required>
+                <input type="number" id="error_rate" name="error_rate" min="0" max="1" step="0.01" value="{{ values.error_rate }}" required>
 
                 <label for="response_time">Response time (ms)</label>
-                <input type="number" id="response_time" min="0" step="0.1" value="120.0" required>
+                <input type="number" id="response_time" name="response_time" min="0" step="0.1" value="{{ values.response_time }}" required>
 
                 <button id="submitButton" type="submit">Analyze log</button>
+                {% if result is not none %}
+                <div id="resultBox" class="result {{ 'anomaly' if result == -1 else 'normal' }}" role="status" aria-live="polite">
+                    {% if result == -1 %}
+                    ⚠️ <strong>Anomaly Detected:</strong> Irregular server traffic pattern flagged!
+                    {% else %}
+                    ✅ <strong>Normal Traffic:</strong> Telemetry metrics are within standard baseline.
+                    {% endif %}
+                </div>
+                {% elif error %}
+                <div id="resultBox" class="result error" role="alert">{{ error }}</div>
+                {% else %}
+                <div id="resultBox" class="result" role="status" aria-live="polite"></div>
+                {% endif %}
             </form>
-            <div id="resultBox" class="result" role="status" aria-live="polite"></div>
         </section>
     </main>
     <script>
@@ -120,9 +132,49 @@ HOME_TEMPLATE = """
 """
 
 
-@app.route("/")
+FEATURE_NAMES = ["request_count", "error_rate", "response_time"]
+
+
+def classify_log(values):
+    if model is None or scaler is None:
+        raise RuntimeError("Model not trained yet. Run src/model.py first.")
+    if not all(math.isfinite(value) for value in values.values()):
+        raise ValueError("Feature values must be finite numbers.")
+    if not 0 <= values["error_rate"] <= 1:
+        raise ValueError("error_rate must be between 0 and 1.")
+
+    log_data = pd.DataFrame([values], columns=FEATURE_NAMES)
+    scaled = scaler.transform(log_data)
+    return int(model.predict(scaled)[0])
+
+
+@app.route("/", methods=["GET", "POST"])
 def home():
-    return render_template_string(HOME_TEMPLATE)
+    values = {
+        "request_count": "150",
+        "error_rate": "0.03",
+        "response_time": "120.0",
+    }
+    result = None
+    error = None
+    status_code = 200
+
+    if request.method == "POST":
+        values = {name: request.form.get(name, "") for name in FEATURE_NAMES}
+        try:
+            numeric_values = {name: float(values[name]) for name in FEATURE_NAMES}
+            result = classify_log(numeric_values)
+        except RuntimeError as exception:
+            error = str(exception)
+            status_code = 503
+        except (TypeError, ValueError) as exception:
+            error = str(exception)
+            status_code = 400
+
+    page = render_template_string(
+        HOME_TEMPLATE, values=values, result=result, error=error
+    )
+    return page, status_code
 
 
 @app.route("/predict", methods=["POST"])
@@ -134,17 +186,9 @@ def predict():
     if not isinstance(content, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
 
-    feature_names = ["request_count", "error_rate", "response_time"]
     try:
-        values = {name: float(content[name]) for name in feature_names}
-        if not all(math.isfinite(value) for value in values.values()):
-            raise ValueError("Feature values must be finite numbers.")
-        if not 0 <= values["error_rate"] <= 1:
-            raise ValueError("error_rate must be between 0 and 1.")
-
-        log_data = pd.DataFrame([values], columns=feature_names)
-        scaled = scaler.transform(log_data)
-        prediction = model.predict(scaled)[0]
+        values = {name: float(content[name]) for name in FEATURE_NAMES}
+        prediction = classify_log(values)
         is_anomaly = bool(prediction == -1)
         message = (
             "🚨 ANOMALY DETECTED: Potential attack or server failure!"
@@ -152,6 +196,8 @@ def predict():
             else "✅ NORMAL: Traffic is operating safely."
         )
         return jsonify({"is_anomaly": is_anomaly, "message": message})
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 500
     except (KeyError, TypeError, ValueError) as error:
         return jsonify({"error": str(error)}), 400
 
