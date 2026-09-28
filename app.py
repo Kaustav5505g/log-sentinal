@@ -57,9 +57,9 @@ HOME_TEMPLATE = """
         button:hover { background: #bde8bf; }
         button:disabled { cursor: wait; opacity: 0.7; }
         .result { display: none; margin-top: 18px; padding: 14px; border-radius: 5px; line-height: 1.45; }
-        .normal { display: block; background: #193c2e; color: #b4e7c9; }
-        .anomaly { display: block; background: #482b25; color: #ffd0b9; }
-        .error { display: block; background: #482b25; color: #ffd0b9; }
+        .normal { display: block; border: 1px solid #81c784; background: #1a3d2b; color: #ffffff; }
+        .anomaly { display: block; border: 1px solid #e57373; background: #3d1a1a; color: #ffffff; }
+        .error { display: block; border: 1px solid #e57373; background: #482b25; color: #ffd0b9; }
     </style>
 </head>
 <body>
@@ -175,6 +175,12 @@ def home():
         HOME_TEMPLATE, values=values, result=result, error=error
     )
     return page, status_code
+
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint to verify the service is running."""
+    return {"status": "healthy", "service": "LogSentinel"}, 200
 
 
 @app.route("/predict", methods=["POST"])
