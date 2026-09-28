@@ -1,4 +1,4 @@
-# LogSentinel: Real-Time Server Anomaly Detection
+# LogSentinal: Real-Time Server Anomaly Detection
 
 LogSentinel is a Python application that generates synthetic server telemetry, trains an unsupervised Isolation Forest anomaly detector, and serves predictions through a Flask dashboard and JSON API.
 
