@@ -1,4 +1,5 @@
 import math
+from datetime import datetime
 from pathlib import Path
 
 import joblib
@@ -195,6 +196,8 @@ def predict():
     try:
         values = {name: float(content[name]) for name in FEATURE_NAMES}
         prediction = classify_log(values)
+        timestamp = datetime.now().isoformat(timespec="microseconds")
+        app.logger.info("Telemetry evaluated at %s", timestamp)
         is_anomaly = bool(prediction == -1)
         message = (
             "🚨 ANOMALY DETECTED: Potential attack or server failure!"
