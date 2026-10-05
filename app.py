@@ -2,7 +2,7 @@ from datetime import datetime
 
 from flask import Flask, jsonify, render_template_string, request
 
-from src.detector import FEATURE_NAMES, detect_log, format_prediction
+from src.detector import FEATURE_NAMES, detect_log
 
 
 app = Flask(__name__)
@@ -196,9 +196,6 @@ def predict():
         detection = classify_log(content)
         timestamp = datetime.now().isoformat(timespec="microseconds")
         app.logger.info("Telemetry evaluated at %s", timestamp)
-        # Preserve compatibility with callers that patch the old classifier to an integer.
-        if isinstance(detection, int):
-            detection = format_prediction(detection)
         return jsonify(detection)
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 500

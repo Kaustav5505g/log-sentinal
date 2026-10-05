@@ -57,21 +57,39 @@ def detect_log(telemetry):
     feature_data = pd.DataFrame([feature_values], columns=FEATURE_NAMES)
     scaled_data = scaler.transform(feature_data)
     prediction = int(model.predict(scaled_data)[0])
-    return format_prediction(prediction)
+    raw_score = float(model.decision_function(scaled_data)[0])
 
-
-def format_prediction(prediction):
-    """Convert an Isolation Forest prediction to the shared API result shape."""
+    # Isolation Forest scores higher for normal data; invert and center the score
+    # at its zero decision boundary, then clamp it to the requested 0-to-1 range.
+    if math.isfinite(raw_score):
+        anomaly_score = min(1.0, max(0.0, 0.5 - raw_score))
+    else:
+        # Preserve a finite score even if the model returns an invalid value.
+        anomaly_score = 1.0 if prediction == -1 else 0.0
+    anomaly_score = round(anomaly_score, 4)
     is_anomaly = prediction == -1
+
+    if prediction == 1:
+        severity = "NORMAL"
+    elif anomaly_score < 0.30:
+        severity = "NORMAL"
+    elif anomaly_score < 0.60:
+        severity = "LOW"
+    elif anomaly_score < 0.80:
+        severity = "MEDIUM"
+    else:
+        severity = "HIGH"
 
     message = (
         "Anomaly detected: telemetry significantly deviates from the learned baseline."
         if is_anomaly
-        else "Normal: telemetry is operating within the learned baseline."
+        else "Telemetry is operating within the learned baseline."
     )
     return {
         "is_anomaly": is_anomaly,
         "prediction": int(prediction),
+        "anomaly_score": anomaly_score,
+        "severity": severity,
         "message": message,
     }
 
