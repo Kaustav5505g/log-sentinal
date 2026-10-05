@@ -1,23 +1,11 @@
-import math
 from datetime import datetime
-from pathlib import Path
 
-import joblib
-import pandas as pd
 from flask import Flask, jsonify, render_template_string, request
+
+from src.detector import FEATURE_NAMES, detect_log
 
 
 app = Flask(__name__)
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-MODEL_PATH = PROJECT_ROOT / "models" / "isolation_forest.pkl"
-SCALER_PATH = PROJECT_ROOT / "models" / "scaler.pkl"
-
-if MODEL_PATH.exists() and SCALER_PATH.exists():
-    model = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
-else:
-    model, scaler = None, None
 
 HOME_TEMPLATE = """
 <!DOCTYPE html>
@@ -78,6 +66,21 @@ HOME_TEMPLATE = """
                 <label for="response_time">Response time (ms)</label>
                 <input type="number" id="response_time" name="response_time" min="0" step="0.1" value="{{ values.response_time }}" required>
 
+                <label for="cpu_usage">CPU usage (%)</label>
+                <input type="number" id="cpu_usage" name="cpu_usage" min="0" max="100" step="0.1" value="{{ values.cpu_usage }}" required>
+
+                <label for="memory_usage">Memory usage (%)</label>
+                <input type="number" id="memory_usage" name="memory_usage" min="0" max="100" step="0.1" value="{{ values.memory_usage }}" required>
+
+                <label for="active_connections">Active connections</label>
+                <input type="number" id="active_connections" name="active_connections" min="0" step="1" value="{{ values.active_connections }}" required>
+
+                <label for="network_in">Network in</label>
+                <input type="number" id="network_in" name="network_in" min="0" step="0.1" value="{{ values.network_in }}" required>
+
+                <label for="network_out">Network out</label>
+                <input type="number" id="network_out" name="network_out" min="0" step="0.1" value="{{ values.network_out }}" required>
+
                 <button id="submitButton" type="submit">Analyze log</button>
                 {% if result is not none %}
                 <div id="resultBox" class="result {{ 'anomaly' if result == -1 else 'normal' }}" role="status" aria-live="polite">
@@ -103,7 +106,12 @@ HOME_TEMPLATE = """
             const data = {
                 request_count: Number(document.getElementById('request_count').value),
                 error_rate: Number(document.getElementById('error_rate').value),
-                response_time: Number(document.getElementById('response_time').value)
+                response_time: Number(document.getElementById('response_time').value),
+                cpu_usage: Number(document.getElementById('cpu_usage').value),
+                memory_usage: Number(document.getElementById('memory_usage').value),
+                active_connections: Number(document.getElementById('active_connections').value),
+                network_in: Number(document.getElementById('network_in').value),
+                network_out: Number(document.getElementById('network_out').value)
             };
 
             button.disabled = true;
@@ -133,20 +141,9 @@ HOME_TEMPLATE = """
 """
 
 
-FEATURE_NAMES = ["request_count", "error_rate", "response_time"]
-
-
 def classify_log(values):
-    if model is None or scaler is None:
-        raise RuntimeError("Model not trained yet. Run src/model.py first.")
-    if not all(math.isfinite(value) for value in values.values()):
-        raise ValueError("Feature values must be finite numbers.")
-    if not 0 <= values["error_rate"] <= 1:
-        raise ValueError("error_rate must be between 0 and 1.")
-
-    log_data = pd.DataFrame([values], columns=FEATURE_NAMES)
-    scaled = scaler.transform(log_data)
-    return int(model.predict(scaled)[0])
+    """Keep the app-facing entry point while delegating inference to the detector."""
+    return detect_log(values)
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -155,6 +152,11 @@ def home():
         "request_count": "150",
         "error_rate": "0.03",
         "response_time": "120.0",
+        "cpu_usage": "55.0",
+        "memory_usage": "50.0",
+        "active_connections": "95",
+        "network_in": "17.0",
+        "network_out": "14.0",
     }
     result = None
     error = None
@@ -164,7 +166,7 @@ def home():
         values = {name: request.form.get(name, "") for name in FEATURE_NAMES}
         try:
             numeric_values = {name: float(values[name]) for name in FEATURE_NAMES}
-            result = classify_log(numeric_values)
+            result = classify_log(numeric_values)["prediction"]
         except RuntimeError as exception:
             error = str(exception)
             status_code = 503
@@ -186,25 +188,15 @@ def health_check():
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    if model is None or scaler is None:
-        return jsonify({"error": "Model not trained yet. Run src/model.py first."}), 500
-
     content = request.get_json(silent=True)
     if not isinstance(content, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
 
     try:
-        values = {name: float(content[name]) for name in FEATURE_NAMES}
-        prediction = classify_log(values)
+        detection = classify_log(content)
         timestamp = datetime.now().isoformat(timespec="microseconds")
         app.logger.info("Telemetry evaluated at %s", timestamp)
-        is_anomaly = bool(prediction == -1)
-        message = (
-            "🚨 ANOMALY DETECTED: Potential attack or server failure!"
-            if is_anomaly
-            else "✅ NORMAL: Traffic is operating safely."
-        )
-        return jsonify({"is_anomaly": is_anomaly, "message": message})
+        return jsonify(detection)
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 500
     except (KeyError, TypeError, ValueError) as error:
