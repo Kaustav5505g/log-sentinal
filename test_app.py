@@ -36,6 +36,38 @@ class HealthCheckTestCase(unittest.TestCase):
             r"\d{2}:\d{2}:\d{2}\.\d{6}",
         )
 
+    def test_prediction_rejects_empty_json(self):
+        response = self.client.post("/predict", json={})
+        self.assertIn(response.status_code, [400, 422])
+
+    def test_prediction_rejects_missing_fields(self):
+        response = self.client.post("/predict", json={"request_count": 150})
+        self.assertIn(response.status_code, [400, 422])
+
+    def test_prediction_rejects_invalid_data_types(self):
+        response = self.client.post(
+            "/predict",
+            json={
+                "request_count": "not-a-number",
+                "error_rate": 0.03,
+                "response_time": 120.0,
+                "cpu_usage": 55.0,
+                "memory_usage": 50.0,
+                "active_connections": 95,
+                "network_in": 17.0,
+                "network_out": 14.0,
+            },
+        )
+        self.assertIn(response.status_code, [400, 422])
+
+    def test_prediction_rejects_non_json_payload(self):
+        response = self.client.post(
+            "/predict",
+            data="plain text payload",
+            content_type="text/plain",
+        )
+        self.assertIn(response.status_code, [400, 415, 422])
+
 
 if __name__ == "__main__":
     unittest.main()
